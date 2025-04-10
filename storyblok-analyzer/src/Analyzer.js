@@ -24,7 +24,7 @@ import {
 import './Analyzer.css';
 
 const SIMILARITY_THRESHOLD = 70;
-const ITEMS_PER_PAGE = 50;
+const ITEMS_PER_PAGE = 20;
 
 const Analyzer = () => {
   const [components, setComponents] = useState([]);
