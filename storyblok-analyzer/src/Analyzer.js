@@ -77,35 +77,31 @@ const Analyzer = () => {
                   similar.push([compA.name, compB.name, similarity]);
                 }
 
+                // Strict subset logic for child detection
                 if (
                   fieldsB.length >= 3 &&
                   fieldsB.every((field) =>
                     fieldsA.some((f) => f.name === field.name && f.type === field.type)
-                  )
+                  ) &&
+                  fieldsA.length > fieldsB.length
                 ) {
                   const parent = compA.name;
                   const child = compB.name;
 
-                  // Calculate the percentage of parent fields that match the child
-                  const parentMatchPercentage = fieldsA.length > 0
-                    ? (fieldsB.filter((field) =>
-                        fieldsA.some((f) => f.name === field.name && f.type === field.type)
-                      ).length / fieldsA.length) * 100
-                    : 0; // Default to 0 if fieldsA is empty
+                  const parentMatchPercentage =
+                    (fieldsB.length / fieldsA.length) * 100;
 
-                  // Group children by parent with match percentage
                   const parentIndex = children.findIndex((item) => item.parent === parent);
+                  const childData = {
+                    name: child,
+                    match: similarity,
+                    parentMatch: parentMatchPercentage,
+                  };
+
                   if (parentIndex === -1) {
-                    children.push({
-                      parent,
-                      children: [{ name: child, match: similarity, parentMatch: parentMatchPercentage }],
-                    });
+                    children.push({ parent, children: [childData] });
                   } else {
-                    children[parentIndex].children.push({
-                      name: child,
-                      match: similarity,
-                      parentMatch: parentMatchPercentage,
-                    });
+                    children[parentIndex].children.push(childData);
                   }
                 }
               }
@@ -130,9 +126,28 @@ const Analyzer = () => {
   }, []);
 
   const handleDownload = () => {
-    generateCSV(["S.No", "Component A", "Component B", "Match %"], report.identical.map((r, i) => [i + 1, ...r]), "identical_components");
-    generateCSV(["S.No", "Component A", "Component B", "Overlap %"], report.similar.map((r, i) => [i + 1, ...r]), "similar_components");
-    generateCSV(["Parent Component", "Child Component", "Match %", "Parent Match %"], report.children.flatMap((r) => r.children.map((child) => [r.parent, child.name, child.match, child.parentMatch])), "child_components");
+    generateCSV(
+      ["S.No", "Component A", "Component B", "Match %"],
+      report.identical.map((r, i) => [i + 1, ...r]),
+      "identical_components"
+    );
+    generateCSV(
+      ["S.No", "Component A", "Component B", "Overlap %"],
+      report.similar.map((r, i) => [i + 1, ...r]),
+      "similar_components"
+    );
+    generateCSV(
+      ["Parent Component", "Child Component", "Match %", "Parent Match %"],
+      report.children.flatMap((r) =>
+        r.children.map((child) => [
+          r.parent,
+          child.name,
+          child.match,
+          child.parentMatch,
+        ])
+      ),
+      "child_components"
+    );
   };
 
   const tabs = [
@@ -187,7 +202,7 @@ const Analyzer = () => {
                       <Table>
                         <TableHead>
                           <TableRow>
-                            <TableCell>S.No</TableCell> {/* Add serial number column */}
+                            <TableCell>S.No</TableCell>
                             <TableCell>Parent Component</TableCell>
                             <TableCell>Child Component</TableCell>
                             <TableCell>Match %</TableCell>
@@ -199,7 +214,7 @@ const Analyzer = () => {
                             <React.Fragment key={i}>
                               {row.children.map((child, j) => (
                                 <TableRow key={`${i}-${j}`}>
-                                  <TableCell>{i * row.children.length + j + 1}</TableCell> {/* Sequential serial number logic */}
+                                  <TableCell>{i * row.children.length + j + 1}</TableCell>
                                   <TableCell>{j === 0 ? row.parent : ""}</TableCell>
                                   <TableCell>{child.name}</TableCell>
                                   <TableCell>{child.match}%</TableCell>
