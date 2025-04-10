@@ -1,3 +1,4 @@
+// Analyzer.js
 import React, { useEffect, useState } from "react";
 import {
   fetchComponentSchema,
@@ -5,121 +6,261 @@ import {
   calculateSimilarity,
   generateCSV,
 } from "./utils";
+import {
+  Button,
+  Typography,
+  CircularProgress,
+  Container,
+  Box,
+  Tabs,
+  Tab,
+  Table,
+  TableHead,
+  TableBody,
+  TableRow,
+  TableCell,
+  Pagination,
+} from "@mui/material";
+import './Analyzer.css';
 
-const SIMILARITY_THRESHOLD = 70; // Threshold for similarity percentage
+const SIMILARITY_THRESHOLD = 70;
+const ITEMS_PER_PAGE = 50;
 
 const Analyzer = () => {
-  const [components, setComponents] = useState([]); // State to store fetched components
-  const [report, setReport] = useState({ identical: [], similar: [], children: [] }); // State to store analysis report
-  const [log, setLog] = useState([]); // State to store logs
-  const [loading, setLoading] = useState(true); // State to manage loading status
+  const [components, setComponents] = useState([]);
+  const [report, setReport] = useState({ identical: [], similar: [], children: [] });
+  const [log, setLog] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [tabIndex, setTabIndex] = useState(0);
+  const [page, setPage] = useState({ identical: 1, similar: 1, children: 1 });
+
+  const paginated = (data, type) =>
+    data.slice((page[type] - 1) * ITEMS_PER_PAGE, page[type] * ITEMS_PER_PAGE);
 
   useEffect(() => {
     const analyze = async () => {
       const logs = [`Analysis started at ${new Date().toISOString()}`];
       try {
-        const spaceId = getQueryParam("space_id"); // Get space_id from URL
+        const spaceId = getQueryParam("space_id");
         if (!spaceId) throw new Error("space_id not found in URL");
 
-        const components = await fetchComponentSchema(spaceId); // Fetch components from API
+        const components = await fetchComponentSchema(spaceId);
         setComponents(components);
         logs.push(`Fetched ${components.length} components.`);
 
-        const identical = [], similar = [], children = [], errors = [];
+        const identical = [];
+        const similar = [];
+        const children = [];
+        const errors = [];
 
-        // Compare components for identical and similar fields
         for (let i = 0; i < components.length; i++) {
+          const compA = components[i];
+          const fieldsA = compA.schema
+            ? Object.entries(compA.schema).map(([k, v]) => ({ name: k, type: v.type }))
+            : [];
+
           for (let j = i + 1; j < components.length; j++) {
             try {
-              const compA = components[i];
               const compB = components[j];
-
-              const fieldsA = compA.schema ? Object.values(compA.schema) : [];
-              const fieldsB = compB.schema ? Object.values(compB.schema) : [];
+              const fieldsB = compB.schema
+                ? Object.entries(compB.schema).map(([k, v]) => ({ name: k, type: v.type }))
+                : [];
 
               if (JSON.stringify(fieldsA) === JSON.stringify(fieldsB)) {
-                identical.push([compA.name, compB.name, "100"]); // Identical components
+                identical.push([compA.name, compB.name, 100]);
               } else {
-                const similarity = calculateSimilarity(fieldsA, fieldsB);
-                if (similarity >= SIMILARITY_THRESHOLD) {
-                  similar.push([compA.name, compB.name, similarity]); // Similar components
+                const simAB = calculateSimilarity(fieldsA, fieldsB);
+                const simBA = calculateSimilarity(fieldsB, fieldsA);
+                const similarity = Math.max(simAB, simBA);
+
+                if (similarity >= SIMILARITY_THRESHOLD && similarity < 100) {
+                  similar.push([compA.name, compB.name, similarity]);
+                }
+
+                if (
+                  fieldsB.length >= 3 &&
+                  fieldsB.every((field) =>
+                    fieldsA.some((f) => f.name === field.name && f.type === field.type)
+                  )
+                ) {
+                  const parent = compA.name;
+                  const child = compB.name;
+
+                  // Calculate the percentage of parent fields that match the child
+                  const parentMatchPercentage = fieldsA.length > 0
+                    ? (fieldsB.filter((field) =>
+                        fieldsA.some((f) => f.name === field.name && f.type === field.type)
+                      ).length / fieldsA.length) * 100
+                    : 0; // Default to 0 if fieldsA is empty
+
+                  // Group children by parent with match percentage
+                  const parentIndex = children.findIndex((item) => item.parent === parent);
+                  if (parentIndex === -1) {
+                    children.push({
+                      parent,
+                      children: [{ name: child, match: similarity, parentMatch: parentMatchPercentage }],
+                    });
+                  } else {
+                    children[parentIndex].children.push({
+                      name: child,
+                      match: similarity,
+                      parentMatch: parentMatchPercentage,
+                    });
+                  }
                 }
               }
-
-              // Check for parent-child relationships
-              fieldsA.forEach((field) => {
-                if (
-                  field.component_whitelist?.includes(compB.name) ||
-                  (field.type === "bloks" && field.restrict_components?.includes(compB.name))
-                ) {
-                  children.push([compA.name, compB.name]);
-                }
-              });
-            } catch (err) {
-              errors.push(`Error comparing: ${err.message}`); // Log errors
+            } catch (e) {
+              errors.push(`Error comparing ${i} and ${j}: ${e.message}`);
             }
           }
         }
 
-        logs.push(`Compared ${components.length} components.`);
+        setReport({ identical, similar, children });
+        logs.push(`Comparison done at ${new Date().toISOString()}`);
         logs.push(...errors);
-
-        setReport({ identical, similar, children }); // Update report state
-      } catch (err) {
-        logs.push(`Error: ${err.message}`); // Log errors
+      } catch (e) {
+        logs.push(`Error: ${e.message}`);
       } finally {
-        setLog(logs); // Update logs state
-        setLoading(false); // Set loading to false
+        setLog(logs);
+        setLoading(false);
       }
     };
 
-    setTimeout(analyze, 1000); // Delay analysis for 1 second
+    analyze();
   }, []);
 
-  // Function to download all reports as CSV files
-  const downloadAllReports = () => {
+  const handleDownload = () => {
     generateCSV(["S.No", "Component A", "Component B", "Match %"], report.identical.map((r, i) => [i + 1, ...r]), "identical_components");
     generateCSV(["S.No", "Component A", "Component B", "Overlap %"], report.similar.map((r, i) => [i + 1, ...r]), "similar_components");
-    generateCSV(["Parent", "Child"], report.children, "child_components");
+    generateCSV(["Parent Component", "Child Component", "Match %", "Parent Match %"], report.children.flatMap((r) => r.children.map((child) => [r.parent, child.name, child.match, child.parentMatch])), "child_components");
   };
 
+  const tabs = [
+    {
+      label: "Identical Components",
+      data: report.identical,
+      columns: ["S.No", "Component A", "Component B", "Match %"],
+      message: "No Identical Components Found",
+      type: "identical",
+    },
+    {
+      label: "Similar Components",
+      data: report.similar,
+      columns: ["S.No", "Component A", "Component B", "Overlap %"],
+      message: "No Similar Components Found",
+      type: "similar",
+    },
+    {
+      label: "Child Components",
+      data: report.children,
+      columns: ["Parent Component", "Child Component", "Match %", "Parent Match %"],
+      message: "No Child Components Found",
+      type: "children",
+    },
+  ];
+
   return (
-    <div className="p-6">
-      <h2>Storyblok Component Analyzer</h2>
-      {loading ? <p>Loading...</p> : (
+    <Container maxWidth="lg" sx={{ py: 4 }}>
+      <Typography variant="h4" gutterBottom>Storyblok Component Analyzer</Typography>
+
+      {loading ? (
+        <Box sx={{ display: "flex", justifyContent: "center", mt: 10 }}>
+          <CircularProgress />
+        </Box>
+      ) : (
         <>
-          {/* Display identical components */}
-          <h3>Identical Components</h3>
-          {report.identical.length ? (
-            <ul>{report.identical.map((row, i) => (
-              <li key={i}>{row.join(" - ")}%</li>
-            ))}</ul>
-          ) : <p>No Identical Components Found</p>}
+          <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 2 }}>
+            <Tabs value={tabIndex} onChange={(_, v) => setTabIndex(v)} textColor="primary" indicatorColor="primary">
+              {tabs.map((t, i) => <Tab key={i} label={t.label} />)}
+            </Tabs>
+            <Button variant="contained" onClick={handleDownload}>Export CSV</Button>
+          </Box>
 
-          {/* Display similar components */}
-          <h3>Similar Components</h3>
-          {report.similar.length ? (
-            <ul>{report.similar.map((row, i) => (
-              <li key={i}>{row.join(" - ")}%</li>
-            ))}</ul>
-          ) : <p>No Similar Components Found</p>}
+          {tabs.map((tab, index) => (
+            tabIndex === index && (
+              <Box key={index}>
+                {tab.data.length === 0 ? (
+                  <Typography variant="body1">{tab.message}</Typography>
+                ) : (
+                  <>
+                    {tab.type === "children" ? (
+                      <Table>
+                        <TableHead>
+                          <TableRow>
+                            <TableCell>S.No</TableCell> {/* Add serial number column */}
+                            <TableCell>Parent Component</TableCell>
+                            <TableCell>Child Component</TableCell>
+                            <TableCell>Match %</TableCell>
+                            <TableCell>Parent Match %</TableCell>
+                          </TableRow>
+                        </TableHead>
+                        <TableBody>
+                          {paginated(tab.data, tab.type).map((row, i) => (
+                            <React.Fragment key={i}>
+                              {row.children.map((child, j) => (
+                                <TableRow key={`${i}-${j}`}>
+                                  <TableCell>{i * row.children.length + j + 1}</TableCell> {/* Sequential serial number logic */}
+                                  <TableCell>{j === 0 ? row.parent : ""}</TableCell>
+                                  <TableCell>{child.name}</TableCell>
+                                  <TableCell>{child.match}%</TableCell>
+                                  <TableCell>{child.parentMatch.toFixed(2)}%</TableCell>
+                                </TableRow>
+                              ))}
+                            </React.Fragment>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    ) : (
+                      <Table>
+                        <TableHead>
+                          <TableRow>
+                            {tab.columns.map((col, i) => (
+                              <TableCell key={i}>{col}</TableCell>
+                            ))}
+                          </TableRow>
+                        </TableHead>
+                        <TableBody>
+                          {paginated(tab.data, tab.type).map((row, i) => (
+                            <TableRow key={i}>
+                              {tab.columns.map((_, j) => (
+                                <TableCell key={j}>
+                                  {j === 0
+                                    ? i + 1 + (page[tab.type] - 1) * ITEMS_PER_PAGE
+                                    : row[j - 1]}
+                                </TableCell>
+                              ))}
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    )}
+                    {tab.data.length > ITEMS_PER_PAGE && (
+                      <Box sx={{ display: "flex", justifyContent: "flex-end", mt: 2 }}>
+                        <Pagination
+                          count={Math.ceil(tab.data.length / ITEMS_PER_PAGE)}
+                          page={page[tab.type]}
+                          onChange={(_, val) =>
+                            setPage((prev) => ({ ...prev, [tab.type]: val }))
+                          }
+                          color="primary"
+                        />
+                      </Box>
+                    )}
+                  </>
+                )}
+              </Box>
+            )
+          ))}
 
-          {/* Display child components */}
-          <h3>Child Components</h3>
-          {report.children.length ? (
-            <ul>{report.children.map((row, i) => (
-              <li key={i}>{row.join(" → ")}</li>
-            ))}</ul>
-          ) : <p>No Child Components Found</p>}
-
-          <button onClick={downloadAllReports}>Download CSV Reports</button>
-
-          {/* Display logs */}
-          <h4>Logs</h4>
-          <ul>{log.map((l, i) => <li key={i}>{l}</li>)}</ul>
+          <Box sx={{ mt: 4 }}>
+            <Typography variant="h6">Logs</Typography>
+            {log.map((line, i) => (
+              <Typography key={i} variant="body2">{line}</Typography>
+            ))}
+          </Box>
         </>
       )}
-    </div>
+    </Container>
   );
 };
 
