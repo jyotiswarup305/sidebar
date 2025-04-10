@@ -21,7 +21,7 @@ import {
   TableCell,
   Pagination,
 } from "@mui/material";
-import './Analyzer.css';
+import "./Analyzer.css";
 
 const SIMILARITY_THRESHOLD = 70;
 const ITEMS_PER_PAGE = 20;
@@ -33,9 +33,38 @@ const Analyzer = () => {
   const [loading, setLoading] = useState(true);
   const [tabIndex, setTabIndex] = useState(0);
   const [page, setPage] = useState({ identical: 1, similar: 1, children: 1 });
+  const [childSortOrder, setChildSortOrder] = useState("desc");
+  const [similarSortOrder, setSimilarSortOrder] = useState("desc");
+
+  const toggleChildSortOrder = () => {
+    setChildSortOrder((prev) => (prev === "asc" ? "desc" : "asc"));
+  };
+
+  const toggleSimilarSortOrder = () => {
+    setSimilarSortOrder((prev) => (prev === "asc" ? "desc" : "asc"));
+  };
 
   const paginated = (data, type) =>
     data.slice((page[type] - 1) * ITEMS_PER_PAGE, page[type] * ITEMS_PER_PAGE);
+
+  const getFlattenedChildren = () => {
+    const sorted = [...report.children].sort((a, b) => {
+      const aAvg =
+        a.children.reduce((sum, c) => sum + c.parentMatch, 0) / a.children.length;
+      const bAvg =
+        b.children.reduce((sum, c) => sum + c.parentMatch, 0) / b.children.length;
+      return childSortOrder === "asc" ? aAvg - bAvg : bAvg - aAvg;
+    });
+
+    return sorted.flatMap((item) =>
+      item.children.map((child) => ({
+        parent: item.parent,
+        childName: child.name,
+        match: child.match,
+        parentMatch: child.parentMatch,
+      }))
+    );
+  };
 
   useEffect(() => {
     const analyze = async () => {
@@ -66,47 +95,54 @@ const Analyzer = () => {
                 ? Object.entries(compB.schema).map(([k, v]) => ({ name: k, type: v.type }))
                 : [];
 
-              if (JSON.stringify(fieldsA) === JSON.stringify(fieldsB)) {
+              const isIdentical =
+                fieldsA.length === fieldsB.length &&
+                fieldsA.every((fA) =>
+                  fieldsB.some((fB) => fA.name === fB.name && fA.type === fB.type)
+                );
+
+              if (isIdentical) {
                 identical.push([compA.name, compB.name, 100]);
-              } else {
-                const simAB = calculateSimilarity(fieldsA, fieldsB);
-                const simBA = calculateSimilarity(fieldsB, fieldsA);
-                const similarity = Math.max(simAB, simBA);
+                continue;
+              }
 
-                if (similarity >= SIMILARITY_THRESHOLD && similarity < 100) {
-                  similar.push([compA.name, compB.name, similarity]);
-                }
+              const simAB = calculateSimilarity(fieldsA, fieldsB);
+              const simBA = calculateSimilarity(fieldsB, fieldsA);
+              const similarity = Math.max(simAB, simBA);
 
-                if (
-                  fieldsB.length >= 3 &&
-                  fieldsB.every((field) =>
-                    fieldsA.some((f) => f.name === field.name && f.type === field.type)
-                  )
-                ) {
-                  const parent = compA.name;
-                  const child = compB.name;
+              if (similarity >= SIMILARITY_THRESHOLD && similarity < 100) {
+                similar.push([compA.name, compB.name, similarity]);
+              }
 
-                  // Calculate the percentage of parent fields that match the child
-                  const parentMatchPercentage = fieldsA.length > 0
-                    ? (fieldsB.filter((field) =>
-                        fieldsA.some((f) => f.name === field.name && f.type === field.type)
-                      ).length / fieldsA.length) * 100
-                    : 0; // Default to 0 if fieldsA is empty
+              const matchedFields = fieldsB.filter((field) =>
+                fieldsA.some((f) => f.name === field.name && f.type === field.type)
+              );
+              const isSubset =
+                fieldsB.length >= 3 &&
+                matchedFields.length === fieldsB.length &&
+                matchedFields.length < fieldsA.length;
 
-                  // Group children by parent with match percentage
-                  const parentIndex = children.findIndex((item) => item.parent === parent);
-                  if (parentIndex === -1) {
-                    children.push({
-                      parent,
-                      children: [{ name: child, match: similarity, parentMatch: parentMatchPercentage }],
-                    });
-                  } else {
-                    children[parentIndex].children.push({
-                      name: child,
-                      match: similarity,
-                      parentMatch: parentMatchPercentage,
-                    });
-                  }
+              if (isSubset) {
+                const parent = compA.name;
+                const child = compB.name;
+
+                const parentMatchPercentage =
+                  (matchedFields.length / fieldsA.length) * 100;
+
+                const parentIndex = children.findIndex(
+                  (item) => item.parent === parent
+                );
+
+                const childInfo = {
+                  name: child,
+                  match: similarity,
+                  parentMatch: parentMatchPercentage,
+                };
+
+                if (parentIndex === -1) {
+                  children.push({ parent, children: [childInfo] });
+                } else {
+                  children[parentIndex].children.push(childInfo);
                 }
               }
             } catch (e) {
@@ -130,10 +166,38 @@ const Analyzer = () => {
   }, []);
 
   const handleDownload = () => {
-    generateCSV(["S.No", "Component A", "Component B", "Match %"], report.identical.map((r, i) => [i + 1, ...r]), "identical_components");
-    generateCSV(["S.No", "Component A", "Component B", "Overlap %"], report.similar.map((r, i) => [i + 1, ...r]), "similar_components");
-    generateCSV(["Parent Component", "Child Component", "Match %", "Parent Match %"], report.children.flatMap((r) => r.children.map((child) => [r.parent, child.name, child.match, child.parentMatch])), "child_components");
+    if (tabIndex === 0) {
+      // Identical Components
+      generateCSV(
+        ["S.No", "Component A", "Component B", "Match %"],
+        report.identical.map((r, i) => [i + 1, ...r]),
+        "identical_components"
+      );
+    } else if (tabIndex === 1) {
+      // Similar Components
+      const sortedSimilar = [...report.similar].sort((a, b) =>
+        similarSortOrder === "asc" ? a[2] - b[2] : b[2] - a[2]
+      );
+      generateCSV(
+        ["S.No", "Component A", "Component B", "Overlap %"],
+        sortedSimilar.map((r, i) => [i + 1, ...r]),
+        "similar_components"
+      );
+    } else if (tabIndex === 2) {
+      // Child Components
+      generateCSV(
+        ["Parent Component", "Child Component", "Match %", "Parent Match %"],
+        getFlattenedChildren().map((child, i) => [
+          child.parent,
+          child.childName,
+          child.match,
+          child.parentMatch.toFixed(2),
+        ]),
+        "child_components"
+      );
+    }
   };
+  
 
   const tabs = [
     {
@@ -145,14 +209,16 @@ const Analyzer = () => {
     },
     {
       label: "Similar Components",
-      data: report.similar,
+      data: [...report.similar].sort((a, b) =>
+        similarSortOrder === "asc" ? a[2] - b[2] : b[2] - a[2]
+      ),
       columns: ["S.No", "Component A", "Component B", "Overlap %"],
       message: "No Similar Components Found",
       type: "similar",
     },
     {
       label: "Child Components",
-      data: report.children,
+      data: getFlattenedChildren(),
       columns: ["Parent Component", "Child Component", "Match %", "Parent Match %"],
       message: "No Child Components Found",
       type: "children",
@@ -161,7 +227,9 @@ const Analyzer = () => {
 
   return (
     <Container maxWidth="lg" sx={{ py: 4 }}>
-      <Typography variant="h4" gutterBottom>Storyblok Component Analyzer</Typography>
+      <Typography variant="h4" gutterBottom>
+        Storyblok Component Analyzer
+      </Typography>
 
       {loading ? (
         <Box sx={{ display: "flex", justifyContent: "center", mt: 10 }}>
@@ -169,71 +237,84 @@ const Analyzer = () => {
         </Box>
       ) : (
         <>
-          <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 2 }}>
-            <Tabs value={tabIndex} onChange={(_, v) => setTabIndex(v)} textColor="primary" indicatorColor="primary">
-              {tabs.map((t, i) => <Tab key={i} label={t.label} />)}
+          <Box
+            sx={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              mb: 2,
+              gap: 2,
+            }}
+          >
+            <Tabs
+              value={tabIndex}
+              onChange={(_, v) => setTabIndex(v)}
+              textColor="primary"
+              indicatorColor="primary"
+            >
+              {tabs.map((t, i) => (
+                <Tab key={i} label={t.label} />
+              ))}
             </Tabs>
-            <Button variant="contained" onClick={handleDownload}>Export CSV</Button>
+            <Box display="flex" gap={2}>
+              {tabIndex === 1 && (
+                <Button variant="outlined" onClick={toggleSimilarSortOrder}>
+                  Sort: {similarSortOrder === "asc" ? "↑ Ascending" : "↓ Descending"}
+                </Button>
+              )}
+              {tabIndex === 2 && (
+                <Button variant="outlined" onClick={toggleChildSortOrder}>
+                  Sort: {childSortOrder === "asc" ? "↑ Ascending" : "↓ Descending"}
+                </Button>
+              )}
+              <Button variant="contained" onClick={handleDownload}>
+                Export CSV
+              </Button>
+            </Box>
           </Box>
 
-          {tabs.map((tab, index) => (
-            tabIndex === index && (
+          {tabs.map((tab, index) =>
+            tabIndex === index ? (
               <Box key={index}>
                 {tab.data.length === 0 ? (
                   <Typography variant="body1">{tab.message}</Typography>
                 ) : (
                   <>
-                    {tab.type === "children" ? (
-                      <Table>
-                        <TableHead>
-                          <TableRow>
-                            <TableCell>S.No</TableCell> {/* Add serial number column */}
-                            <TableCell>Parent Component</TableCell>
-                            <TableCell>Child Component</TableCell>
-                            <TableCell>Match %</TableCell>
-                            <TableCell>Parent Match %</TableCell>
-                          </TableRow>
-                        </TableHead>
-                        <TableBody>
-                          {paginated(tab.data, tab.type).map((row, i) => (
-                            <React.Fragment key={i}>
-                              {row.children.map((child, j) => (
-                                <TableRow key={`${i}-${j}`}>
-                                  <TableCell>{i * row.children.length + j + 1}</TableCell> {/* Sequential serial number logic */}
-                                  <TableCell>{row.parent }</TableCell>
-                                  <TableCell>{child.name}</TableCell>
-                                  <TableCell>{child.match}%</TableCell>
-                                  <TableCell>{child.parentMatch.toFixed(2)}%</TableCell>
-                                </TableRow>
-                              ))}
-                            </React.Fragment>
+                    <Table>
+                      <TableHead>
+                        <TableRow>
+                          {tab.type === "children" && <TableCell>S.No</TableCell>}
+                          {tab.columns.map((col, i) => (
+                            <TableCell key={i}>{col}</TableCell>
                           ))}
-                        </TableBody>
-                      </Table>
-                    ) : (
-                      <Table>
-                        <TableHead>
-                          <TableRow>
-                            {tab.columns.map((col, i) => (
-                              <TableCell key={i}>{col}</TableCell>
-                            ))}
-                          </TableRow>
-                        </TableHead>
-                        <TableBody>
-                          {paginated(tab.data, tab.type).map((row, i) => (
-                            <TableRow key={i}>
-                              {tab.columns.map((_, j) => (
-                                <TableCell key={j}>
-                                  {j === 0
-                                    ? i + 1 + (page[tab.type] - 1) * ITEMS_PER_PAGE
-                                    : row[j - 1]}
+                        </TableRow>
+                      </TableHead>
+                      <TableBody>
+                        {tab.type === "children"
+                          ? paginated(tab.data, "children").map((item, index) => (
+                              <TableRow key={index}>
+                                <TableCell>
+                                  {index + 1 + (page.children - 1) * ITEMS_PER_PAGE}
                                 </TableCell>
-                              ))}
-                            </TableRow>
-                          ))}
-                        </TableBody>
-                      </Table>
-                    )}
+                                <TableCell>{item.parent}</TableCell>
+                                <TableCell>{item.childName}</TableCell>
+                                <TableCell>{item.match}%</TableCell>
+                                <TableCell>{item.parentMatch.toFixed(2)}%</TableCell>
+                              </TableRow>
+                            ))
+                          : paginated(tab.data, tab.type).map((row, i) => (
+                              <TableRow key={i}>
+                                {tab.columns.map((_, j) => (
+                                  <TableCell key={j}>
+                                    {j === 0
+                                      ? i + 1 + (page[tab.type] - 1) * ITEMS_PER_PAGE
+                                      : row[j - 1]}
+                                  </TableCell>
+                                ))}
+                              </TableRow>
+                            ))}
+                      </TableBody>
+                    </Table>
                     {tab.data.length > ITEMS_PER_PAGE && (
                       <Box sx={{ display: "flex", justifyContent: "flex-end", mt: 2 }}>
                         <Pagination
@@ -249,13 +330,15 @@ const Analyzer = () => {
                   </>
                 )}
               </Box>
-            )
-          ))}
+            ) : null
+          )}
 
           <Box sx={{ mt: 4 }}>
             <Typography variant="h6">Logs</Typography>
             {log.map((line, i) => (
-              <Typography key={i} variant="body2">{line}</Typography>
+              <Typography key={i} variant="body2">
+                {line}
+              </Typography>
             ))}
           </Box>
         </>
