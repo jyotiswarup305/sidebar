@@ -200,7 +200,7 @@ const Analyzer = () => {
                               {row.children.map((child, j) => (
                                 <TableRow key={`${i}-${j}`}>
                                   <TableCell>{i * row.children.length + j + 1}</TableCell> {/* Sequential serial number logic */}
-                                  <TableCell>{row.parent }</TableCell>
+                                  <TableCell>{j === 0 ? row.parent : ""}</TableCell>
                                   <TableCell>{child.name}</TableCell>
                                   <TableCell>{child.match}%</TableCell>
                                   <TableCell>{child.parentMatch.toFixed(2)}%</TableCell>
